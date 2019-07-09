@@ -91,18 +91,26 @@ static future<std::optional<record>> find_record(cql3::query_processor& qp, std:
             consistency_for_role(role_name),
             internal_distributed_timeout_config(),
             {sstring(role_name)},
-            true).then([](::shared_ptr<cql3::untyped_result_set> results) {
+            true).then([role_name] (::shared_ptr<cql3::untyped_result_set> results) {
         if (results->empty()) {
             return std::optional<record>();
         }
 
         const cql3::untyped_result_set_row& row = results->one();
 
+        auto get_bool_and_warn_if_null = [&row, &role_name] (sstring column, bool default_value) {
+            if (!row.has(column)) {
+                log.error("{} might be corrupted, column \"{}\" contains no value for role \"{}\" and it should have.",
+                        meta::roles_table::qualified_name(), column, role_name);
+                return default_value;
+            }
+            return row.get_as<bool>(column);
+        };
         return std::make_optional(
                 record{
                         row.get_as<sstring>(sstring(meta::roles_table::role_col_name)),
-                        row.get_as<bool>("is_superuser"),
-                        row.get_as<bool>("can_login"),
+                        get_bool_and_warn_if_null("is_superuser", false),
+                        get_bool_and_warn_if_null("can_login", false),
                         (row.has("member_of")
                                  ? row.get_set<sstring>("member_of")
                                  : role_set())});
